@@ -105,9 +105,9 @@ How do we do that?
 Well, you have Clojure functions to help you there
 
     (let [Ej (g/rxns-template [i j]
-               Xi + Ej <-> Xi-Ej at 1, 1
-               Xi-Ej <-> Xj-Ej at 1, 1
-               Xj-Ej <-> Xj + Ej at 1, 1)
+               "rj.1" Xi + Ej <-> Xi-Ej at 1, 1
+               "rj.2" Xi-Ej <-> Xj-Ej at 1, 1
+               "rj.3" Xj-Ej <-> Xj + Ej at 1, 1)
           Xi (fn [i] (Ej i (inc i)))]
       (g/simulate (g/rxns (Xi 0) (Xi 1))
                   {X0 100000

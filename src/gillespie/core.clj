@@ -60,14 +60,15 @@
                         :cmds (get-commands rhs-counts lhs-counts)}])))
 
 (defn simulate* [rxns init opts]
-  (let [{:keys [num-steps time until perturbations]} opts
+  (let [{:keys [num-steps time while until perturbations]} opts
         state {:time 0 :num-steps 0 :mixture init :rxns (mapcat compile-rxn rxns)}
         sim (iterate (fn [state]
                        (reduce #(%2 %1) (step state) perturbations)) state)]
     (cond
       num-steps (take (inc num-steps) sim)
       time (take-while #(<= (:time %) time) sim)
-      until (take-while until sim)
+      while (take-while while sim)
+      until (take-while (complement until) sim)
       :else sim)))
 
 (defn- encode-rxn [rxn]
