@@ -2,12 +2,13 @@
   (:require [clojure.contrib.generic.math-functions :as math]
             [clojure.string :as s]))
 
-(defn- choice [m]
-  (let [r (rand (apply + (vals m)))]
-    (loop [[[k w] & kws] (seq m)
-           sum 0]
-      (if (or (nil? kws) (< r (+ sum w))) k
-          (recur kws (+ sum w))))))
+(defn- select-rxn [activities total-activity]
+  (let [r (rand total-activity)]
+    (loop [[[rxn a] & rem] activities, sum 0]
+      (let [sum+a (+ sum a)]
+        (if (or (<= r sum+a) (nil? rem))
+          rxn
+          (recur rem sum+a))))))
 
 (defn rxn-commands [rxn]
   (:cmds rxn))
@@ -21,15 +22,23 @@
 (defn get-molecule [state mol]
   (get-in state [:mixture mol] 0))
 
-(defn get-activities [state] ;; TODO this fn takes ~70% of the time. optimize it!
-  (into {} (for [{:keys [lhs rate] :as r} (:rxns state)]
-             [r (apply * rate (for [[mol freq] lhs]
-                                (* (get-molecule state mol) freq)))])))
+(defn possible-combinations [sc n]
+  ;; sc is the stoichiometric coeff and n the number of molecules
+  (if (> sc 1)
+    (/ (apply * (take sc (iterate dec n))) sc)
+    n))
+
+(defn get-activities [state] ;; FIXME this fn takes ~50% of the time
+  (let [{:keys [rxns mixture]} state]
+    (for [{:keys [lhs rate] :as r} (:rxns state)]
+      [r (reduce (fn [result [specie sc]]
+                   (* result (possible-combinations sc (mixture specie 0))))
+                 rate lhs)])))
 
 (defn step [state]
   (let [activities (get-activities state)
-        rxn (choice activities)
-        total-activity (apply + (vals activities))]
+        total-activity (apply + (map second activities))
+        rxn (select-rxn activities total-activity)]
     (if (= total-activity 0)
       (assoc state :deadlock? true)
       (let [dt (/ (math/log (/ 1 (rand))) total-activity)]
@@ -60,10 +69,10 @@
                         :cmds (get-commands rhs-counts lhs-counts)}])))
 
 (defn simulate* [rxns init opts]
-  (let [{:keys [num-steps time while until perturbations]} opts
+  (let [{:keys [num-steps time while until perturbations callbacks]} opts
         state {:time 0 :num-steps 0 :mixture init :rxns (mapcat compile-rxn rxns)}
         sim (iterate (fn [state]
-                       (reduce #(%2 %1) (step state) perturbations)) state)]
+                       (reduce #(%2 %1) (step state) (concat perturbations callbacks))) state)]
     (cond
       num-steps (take (inc num-steps) sim)
       time (take-while #(<= (:time %) time) sim)
@@ -125,14 +134,16 @@
   (update-in state [:rxns]
              (partial map #(if (= (:name %) rxn-name) (update-in % [:rate] f) %))))
 
-(defn- make-modification [[op qty-or-rxn specie-or-qty-or-fn]]
+(defn- make-modification [[op arg1 arg2]]
   (case op
-    'add #(update-molecule % (str specie-or-qty-or-fn) (partial + qty-or-rxn))
-    'del #(update-molecule % (str specie-or-qty-or-fn) (partial - qty-or-rxn))
-    'update-rate #(update-rate % qty-or-rxn specie-or-qty-or-fn)
-    'change-rate #(update-rate % qty-or-rxn (partial + specie-or-qty-or-fn))
-    'inc-rate #(update-rate % qty-or-rxn (partial + specie-or-qty-or-fn))
-    'dec-rate #(update-rate % qty-or-rxn (partial - specie-or-qty-or-fn))))
+    'add #(update-molecule % (str arg2) (partial + arg1))
+    'del #(update-molecule % (str arg2) (partial - arg1))
+    'set #(assoc-in % [:mixture arg1] arg2)
+    'update-rate #(update-rate % arg1 arg2)
+    'change-rate #(update-rate % arg1 (constantly arg2))
+    'inc-rate #(update-rate % arg1 (partial + arg2))
+    'dec-rate #(update-rate % arg1 (partial - arg2))
+    'print #(do (println ((keyword arg1) %)) %)))
 
 (defn- get-qty-if-molecule [x state]
   (let [{:keys [mixture]} state]
@@ -143,11 +154,11 @@
     'at (let [[wait-amount wait-type] pred-part]
           #(= wait-amount ((case wait-type
                              'time-units :time
-                             'events :num-steps) %)))
+                             'steps :num-steps) %)))
     'every (let [[wait-amount wait-type] pred-part]
              #(zero? (mod ((case wait-type
                              'time-units :time
-                             'events :num-steps) %) wait-amount)))
+                             'steps :num-steps) %) wait-amount)))
     'when (cond
             (= (count pred-part) 3) (let [[a op b] pred-part]
                                       #((resolve op)
@@ -163,19 +174,35 @@
     (transform-if (make-pred (first p) pred-part)
                   (make-modification mod-part))))
 
-(defn- parse-opts [opts]
+(defn parse-form [species callback]
+  (for [elem callback]
+    (cond
+      (list? elem) (parse-form species elem)
+      (vector? elem) (vec (parse-form species elem))
+      (some #{elem} species) (str elem)
+      :else elem)))
+
+(defn parse-callbacks [callbacks species]
+  (vec (map (partial parse-form species) callbacks)))
+
+(defn- parse-opts [opts species]
   (let [groups (map (partial apply concat) (partition 2 (partition-by keyword? opts)))
-        [[_ & perturbations]] (filter (comp #{:perturbations} first) groups)]
+        [[_ & perturbations]] (filter (comp #{:perturbations} first) groups)
+        [[_ & callbacks]] (filter (comp #{:callbacks} first) groups)]
     ;; delay parse-perturbations until runtime, because it returns fn objects
-    (into {:perturbations `(parse-perturbations ~perturbations)}
-          (map vec (remove (comp #{:perturbations} first) groups)))))
+    (into {:perturbations `(parse-perturbations '~perturbations)
+           :callbacks (parse-callbacks callbacks species)}
+          (map vec (remove (comp #{:perturbations :callbacks} first) groups)))))
 
 (defn replace-keys [f m]
   (into {} (for [[k v] m] [(f k) v])))
 
 (defmacro simulate [rxn-set-spec init & opts]
-  `(simulate* ~((transform-if vector? rxns*) rxn-set-spec)
-              ~(replace-keys str init) ~(parse-opts opts)))
+  (let [rxn-set ((transform-if vector? rxns*) rxn-set-spec)
+        species (map symbol ;; bring them back as symbols to replace them in callbacks
+                     (distinct (apply concat (for [[_ rxn _] rxn-set]
+                                               (remove #{"->" "<->"} rxn)))))]
+    `(simulate* ~rxn-set ~(replace-keys str init) ~(parse-opts opts species))))
 
 (defn get-populations [simulation]
   (zipmap (map :time simulation) (map :mixture simulation)))
