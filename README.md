@@ -2,7 +2,7 @@
 
 This Clojure library lets you stochastically simulate chemical reaction systems.
 It's goal is to make the interface as simple and natural as I could for chemists.
-Also, it's a very concise library of about 150 lines of code.
+Also, it's a very concise library of about 180 lines of code.
 
 #### License
 
@@ -54,13 +54,14 @@ Also, you may include perturbations in your simulation as is shown next
                 :until #(or (>= (:time %) 10) (>= (:num-steps %) 1000))
                 :perturbations
                 (at 2 time-units add 1 X0)
-                (every 20 events del 1 X1)
+                (every 20 steps del 1 X1)
                 (when X0 = 990 change-rate "r1" 10)
                 (when "r2" executes inc-rate "r3" 1))
 
 Perturbations are composed by two parts, the predicate part (at the beginning)
 and the modification part (at the end).
-Posible modifications functions are `add`, `del`, `change-rate`, `inc-rate`, `dec-rate` and `update-rate`.
+Posible modifications functions are `add`, `del`, `set`,
+`change-rate`, `inc-rate`, `dec-rate` and `update-rate`.
 The last one takes a function you specifies instead of an quantity, unlike the other ones.
 
 But all this wouldn't be so useful if reactions could only be specified in the simulate call,

@@ -1,4 +1,4 @@
-(defproject gillespie "0.0.1-SNAPSHOT"
-  :description "TODO: add summary of your project"
+(defproject gillespie "current"
+  :description "Gillespie's algorithm implementation in Clojure"
   :dependencies [[clojure "1.2.0"]
                  [clojure-contrib "1.2.0"]])
